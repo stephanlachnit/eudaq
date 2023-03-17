@@ -136,7 +136,7 @@ bool dSiPMEvent2StdEventConverter::Converting(
   {
     auto lock = std::unique_lock(m_ttree_mutex);
     if (m_ttree_ugly == nullptr) {
-      m_ttree_ugly = new TTree("ugly", "ugly");
+      m_ttree_ugly = new TTree("dSiPM_clockdata", "dSiPM clock data");
       m_ttree_ugly->Branch("plane_id", &plane_id);
       m_ttree_ugly->Branch("trigger", &tt_trigger_id_fpga);
       m_ttree_ugly->Branch("frame", &tt_frame);
@@ -184,9 +184,9 @@ bool dSiPMEvent2StdEventConverter::Converting(
 
     // check valid bits if requested
     if (m_checkValid[plane_id] == true && hitBit == true && validBit == false) {
-      EUDAQ_ERROR(
+      EUDAQ_WARN(
         "This pixel is hit, but the valid bit for the quadrant is not set");
-      EUDAQ_ERROR("  col and row " + to_string(col) + " " + to_string(row));
+      EUDAQ_WARN("  col and row " + to_string(col) + " " + to_string(row));
       return false;
     }
 
@@ -194,16 +194,16 @@ bool dSiPMEvent2StdEventConverter::Converting(
     // 4 * 1 / 204 MHz due between read going low and frame reset going high.
     // 3 * 1 / 408 MHz of that dead time are at the begin of a bunch, the rest
     // is at the end.
-    // all three clocks should start with 1, which i subtract. For the coarse
+    // all three clocks should start with 1, which is subtracted. For the coarse
     // clock 0 should never appear, unless the clocks and frame reset are out
-    // of sync. for the fine clock 0 may appear but should be mapped to 32.
-    // we should check if we ever actually read 31.
+    // of sync or a trigger appears in the frame reset.
     if (clockCoarse == 0) {
-      EUDAQ_WARN("Coarse clock == 0. This should not happen.");
+      EUDAQ_WARN("Coarse clock == 0. This might screw up timing analysis.");
+      if (m_checkValid[plane_id] == true) {
+        return false;
+      }
     }
-    if (clockFine == 31) {
-      EUDAQ_WARN("Fine clock == 31. Interesting!");
-    }
+    // for the fine clock 0 may appear but should be mapped to 32
     if (clockFine == 0) {
       clockFine = 32;
     }
@@ -234,7 +234,7 @@ bool dSiPMEvent2StdEventConverter::Converting(
                               (clockFine - 1) * 1e6 / (408. * nBitEff));
 
     // check frame start if we want valid check
-    if (m_checkValid[plane_id] && frameStart > 0 && frameStart != thisPixFrameStart) {
+    if (m_checkValid[plane_id] && (frameStart > 0 && frameStart != thisPixFrameStart)) {
       EUDAQ_ERROR("This frame start does not match prev. pixels frame start "
                   "(from same event)");
       EUDAQ_ERROR("  bunch counter ID " + to_string(bunchCount));
