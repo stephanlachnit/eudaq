@@ -111,6 +111,8 @@ bool dSiPMEvent2StdEventConverter::Converting(
   EUDAQ_DEBUG("Decoded into " + to_string(frame.size()) + " pixels in frame.");
 
   // decode trailer with time info from FPGA
+  // ts_readout_fpga: 3MHz counter
+  // ts_fine_fpga: 408 MHz counter
   auto [ts_control_fpga, ts_fine_fpga, ts_readout_fpga, trigger_id_fpga] =
     decoder.decodeTrailer(rawdata);
   // derive frame counter (inside trigger number)
@@ -135,6 +137,8 @@ bool dSiPMEvent2StdEventConverter::Converting(
   static uint64_t tt_bunchCount;
   static uint8_t tt_clockCoarse, tt_clockFine;
   static uint64_t tt_timestamp;
+  static uint64_t tt_ts_3mhz_fpga;
+  static uint16_t tt_ts_408mhz_fpga;
   {
     auto lock = std::unique_lock(m_global_mutex);
     if (m_ttree_clockdata == nullptr) {
@@ -151,6 +155,8 @@ bool dSiPMEvent2StdEventConverter::Converting(
       m_ttree_clockdata->Branch("clockCoarse", &tt_clockCoarse);
       m_ttree_clockdata->Branch("clockFine", &tt_clockFine);
       m_ttree_clockdata->Branch("timestamp", &tt_timestamp);
+      m_ttree_clockdata->Branch("fpga_3mhz", &tt_ts_3mhz_fpga);
+      m_ttree_clockdata->Branch("fpga_408mhz", &tt_ts_408mhz_fpga);
     }
     lock.unlock();
   }
@@ -274,6 +280,8 @@ bool dSiPMEvent2StdEventConverter::Converting(
     tt_clockCoarse = clockCoarse;
     tt_clockFine = clockFine;
     tt_timestamp = timestamp;
+    tt_ts_3mhz_fpga = ts_readout_fpga;
+    tt_ts_408mhz_fpga = ts_fine_fpga;
     m_ttree_clockdata->Fill();
     lock.unlock();
 
