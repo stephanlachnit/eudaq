@@ -112,7 +112,9 @@ bool dSiPMEvent2StdEventConverter::Converting(
     return false;
   }
 
-    // TTree yeah
+  // TTree yeah
+  static uint32_t tt_trigger_id_fpga;
+  static uint64_t tt_frame;
   static uint8_t tt_quadrant;
   static uint16_t tt_col, tt_row;
   static uint8_t tt_hitBit;
@@ -125,8 +127,8 @@ bool dSiPMEvent2StdEventConverter::Converting(
     if (m_ttree_ugly == nullptr) {
       m_ttree_ugly = new TTree("ugly", "ugly");
       m_ttree_ugly->Branch("plane_id", &plane_id);
-      m_ttree_ugly->Branch("trigger", &m_trigger[plane_id]);
-      m_ttree_ugly->Branch("frame", &m_frame[plane_id]);
+      m_ttree_ugly->Branch("trigger", &tt_trigger_id_fpga);
+      m_ttree_ugly->Branch("frame", &tt_frame);
       m_ttree_ugly->Branch("quadrant", &tt_quadrant);
       m_ttree_ugly->Branch("col", &tt_col);
       m_ttree_ugly->Branch("row", &tt_row);
@@ -246,6 +248,9 @@ bool dSiPMEvent2StdEventConverter::Converting(
     plane.PushPixel(col, row, hitBit, timestamp);
 
     // Fill TTree
+    auto lock = std::unique_lock(m_ttree_mutex);
+    tt_trigger_id_fpga = trigger_id_fpga;
+    tt_frame = m_frame[plane_id];
     tt_quadrant = getQuadrant(col, row);
     tt_col = col;
     tt_row = row;
@@ -255,7 +260,6 @@ bool dSiPMEvent2StdEventConverter::Converting(
     tt_clockCoarse = clockCoarse;
     tt_clockFine = clockFine;
     tt_timestamp = timestamp;
-    auto lock = std::unique_lock(m_ttree_mutex);
     m_ttree_ugly->Fill();
     lock.unlock();
 
