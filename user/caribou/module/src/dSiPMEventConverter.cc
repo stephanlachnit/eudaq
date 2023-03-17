@@ -17,10 +17,11 @@ std::vector<bool> dSiPMEvent2StdEventConverter::m_checkValid({});
 std::vector<std::array<double, 4>> dSiPMEvent2StdEventConverter::m_fine_ts_effective_bits({});
 std::vector<uint64_t> dSiPMEvent2StdEventConverter::frame_start({});
 std::vector<uint64_t> dSiPMEvent2StdEventConverter::frame_stop({});
+std::vector<bool> dSiPMEvent2StdEventConverter::m_create_ttree({});
+std::mutex dSiPMEvent2StdEventConverter::m_global_mutex({});
+TTree* dSiPMEvent2StdEventConverter::m_ttree_clockdata(nullptr);
 std::vector<uint64_t> dSiPMEvent2StdEventConverter::m_trigger({});
 std::vector<uint64_t> dSiPMEvent2StdEventConverter::m_frame({});
-TTree* dSiPMEvent2StdEventConverter::m_ttree_ugly(nullptr);
-std::mutex dSiPMEvent2StdEventConverter::m_ttree_mutex({});
 
 bool dSiPMEvent2StdEventConverter::Converting(
     eudaq::EventSPC d1, eudaq::StandardEventSP d2,
@@ -33,8 +34,7 @@ bool dSiPMEvent2StdEventConverter::Converting(
   }
 
   // Set eudaq::StandardPlane::ID for multiple detectors
-  static uint32_t plane_id = 0;
-  plane_id = conf->Get("plane_id", 0);
+  uint32_t plane_id = conf->Get("plane_id", 0);
   EUDAQ_DEBUG("Setting eudaq::StandardPlane::ID to " + to_string(plane_id));
 
   if (m_configured.size() < plane_id + 1) {
@@ -46,6 +46,7 @@ bool dSiPMEvent2StdEventConverter::Converting(
     m_fine_ts_effective_bits.push_back({32., 32., 32., 32.});
     frame_start.push_back(0);
     frame_stop.push_back(2);
+    m_create_ttree.push_back(false);
     m_trigger.push_back(0);
     m_frame.push_back(0);
   }
@@ -124,6 +125,7 @@ bool dSiPMEvent2StdEventConverter::Converting(
   }
 
   // TTree yeah
+  static uint32_t tt_plane_id;
   static uint32_t tt_trigger_id_fpga;
   static uint64_t tt_frame;
   static uint8_t tt_quadrant;
@@ -134,21 +136,21 @@ bool dSiPMEvent2StdEventConverter::Converting(
   static uint8_t tt_clockCoarse, tt_clockFine;
   static uint64_t tt_timestamp;
   {
-    auto lock = std::unique_lock(m_ttree_mutex);
-    if (m_ttree_ugly == nullptr) {
-      m_ttree_ugly = new TTree("dSiPM_clockdata", "dSiPM clock data");
-      m_ttree_ugly->Branch("plane_id", &plane_id);
-      m_ttree_ugly->Branch("trigger", &tt_trigger_id_fpga);
-      m_ttree_ugly->Branch("frame", &tt_frame);
-      m_ttree_ugly->Branch("quadrant", &tt_quadrant);
-      m_ttree_ugly->Branch("col", &tt_col);
-      m_ttree_ugly->Branch("row", &tt_row);
-      m_ttree_ugly->Branch("hitBit", &tt_hitBit);
-      m_ttree_ugly->Branch("validBit", &tt_validBit);
-      m_ttree_ugly->Branch("bunchCount", &tt_bunchCount);
-      m_ttree_ugly->Branch("clockCoarse", &tt_clockCoarse);
-      m_ttree_ugly->Branch("clockFine", &tt_clockFine);
-      m_ttree_ugly->Branch("timestamp", &tt_timestamp);
+    auto lock = std::unique_lock(m_global_mutex);
+    if (m_ttree_clockdata == nullptr) {
+      m_ttree_clockdata = new TTree("dSiPM_clockdata", "dSiPM clock data");
+      m_ttree_clockdata->Branch("plane_id", &tt_plane_id);
+      m_ttree_clockdata->Branch("trigger", &tt_trigger_id_fpga);
+      m_ttree_clockdata->Branch("frame", &tt_frame);
+      m_ttree_clockdata->Branch("quadrant", &tt_quadrant);
+      m_ttree_clockdata->Branch("col", &tt_col);
+      m_ttree_clockdata->Branch("row", &tt_row);
+      m_ttree_clockdata->Branch("hitBit", &tt_hitBit);
+      m_ttree_clockdata->Branch("validBit", &tt_validBit);
+      m_ttree_clockdata->Branch("bunchCount", &tt_bunchCount);
+      m_ttree_clockdata->Branch("clockCoarse", &tt_clockCoarse);
+      m_ttree_clockdata->Branch("clockFine", &tt_clockFine);
+      m_ttree_clockdata->Branch("timestamp", &tt_timestamp);
     }
     lock.unlock();
   }
@@ -259,7 +261,8 @@ bool dSiPMEvent2StdEventConverter::Converting(
     plane.PushPixel(col, row, hitBit, timestamp);
 
     // Fill TTree
-    auto lock = std::unique_lock(m_ttree_mutex);
+    auto lock = std::unique_lock(m_global_mutex);
+    tt_plane_id = plane_id;
     tt_trigger_id_fpga = trigger_id_fpga;
     tt_frame = m_frame[plane_id];
     tt_quadrant = getQuadrant(col, row);
@@ -271,7 +274,7 @@ bool dSiPMEvent2StdEventConverter::Converting(
     tt_clockCoarse = clockCoarse;
     tt_clockFine = clockFine;
     tt_timestamp = timestamp;
-    m_ttree_ugly->Fill();
+    m_ttree_clockdata->Fill();
     lock.unlock();
 
   } // pixels in frame

@@ -92,8 +92,9 @@ namespace eudaq {
     static std::vector<uint64_t> frame_stop;
     static std::vector<uint64_t> m_trigger;
     static std::vector<uint64_t> m_frame;
-    static TTree* m_ttree_ugly;
-    static std::mutex m_ttree_mutex;
+    static std::vector<bool> m_create_ttree;
+    static std::mutex m_global_mutex;
+    static TTree* m_ttree_clockdata;
   };
 
   class CLICpix2Event2StdEventConverter: public eudaq::StdEventConverter{
