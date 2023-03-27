@@ -15,8 +15,8 @@ std::vector<bool> dSiPMEvent2StdEventConverter::m_configured({});
 std::vector<bool> dSiPMEvent2StdEventConverter::m_zeroSupp({});
 std::vector<bool> dSiPMEvent2StdEventConverter::m_checkValid({});
 std::vector<std::array<double, 4>> dSiPMEvent2StdEventConverter::m_fine_ts_effective_bits({});
-std::vector<uint64_t> dSiPMEvent2StdEventConverter::frame_start({});
-std::vector<uint64_t> dSiPMEvent2StdEventConverter::frame_stop({});
+std::vector<uint64_t> dSiPMEvent2StdEventConverter::m_frame_start({});
+std::vector<uint64_t> dSiPMEvent2StdEventConverter::m_frame_stop({});
 std::vector<bool> dSiPMEvent2StdEventConverter::m_create_ttree({});
 std::mutex dSiPMEvent2StdEventConverter::m_global_mutex({});
 TTree* dSiPMEvent2StdEventConverter::m_ttree_clockdata(nullptr);
@@ -44,9 +44,9 @@ bool dSiPMEvent2StdEventConverter::Converting(
     m_zeroSupp.push_back(true);
     m_checkValid.push_back(false);
     m_fine_ts_effective_bits.push_back({32., 32., 32., 32.});
-    frame_start.push_back(0);
-    frame_stop.push_back(2);
-    m_create_ttree.push_back(false);
+    m_frame_start.push_back(0);
+    m_frame_stop.push_back(2);
+    m_create_ttree.push_back(true);
     m_trigger.push_back(0);
     m_frame.push_back(0);
   }
@@ -58,14 +58,15 @@ bool dSiPMEvent2StdEventConverter::Converting(
     m_fine_ts_effective_bits[plane_id][1] = conf->Get("fine_ts_effective_bits_q1", 32.);
     m_fine_ts_effective_bits[plane_id][2] = conf->Get("fine_ts_effective_bits_q2", 32.);
     m_fine_ts_effective_bits[plane_id][3] = conf->Get("fine_ts_effective_bits_q3", 32.);
-    frame_start[plane_id] = conf->Get("frame_start", 0);
-    frame_stop[plane_id] = conf->Get("frame_stop", 2);
+    m_frame_start[plane_id] = conf->Get("frame_start", 0);
+    m_frame_stop[plane_id] = conf->Get("frame_stop", 2);
+    m_create_ttree[plane_id] = conf->Get("create_ttree", true);
 
     EUDAQ_INFO("Using configuration for plane ID " + to_string(plane_id) + ":");
     EUDAQ_INFO("  zero_suppression = " + to_string(m_zeroSupp[plane_id]));
     EUDAQ_INFO("  check_valid = " + to_string(m_checkValid[plane_id]));
-    EUDAQ_INFO("  frame_start = " + to_string(frame_start[plane_id]));
-    EUDAQ_INFO("  frame_end = " + to_string(frame_stop[plane_id]));
+    EUDAQ_INFO("  frame_start = " + to_string(m_frame_start[plane_id]));
+    EUDAQ_INFO("  frame_stop = " + to_string(m_frame_stop[plane_id]));
     EUDAQ_INFO("  fine_ts_effective_bits");
     EUDAQ_INFO("    _q0 " + to_string(m_fine_ts_effective_bits[plane_id][0]));
     EUDAQ_INFO("    _q1 " + to_string(m_fine_ts_effective_bits[plane_id][1]));
@@ -111,17 +112,14 @@ bool dSiPMEvent2StdEventConverter::Converting(
   EUDAQ_DEBUG("Decoded into " + to_string(frame.size()) + " pixels in frame.");
 
   // decode trailer with time info from FPGA
-  // ts_readout_fpga: 3MHz counter
-  // ts_fine_fpga: 408 MHz counter
-  auto [ts_control_fpga, ts_fine_fpga, ts_readout_fpga, trigger_id_fpga] =
-    decoder.decodeTrailer(rawdata);
+  auto fpgadata = decoder.decodeTrailer(rawdata);
   // derive frame counter (inside trigger number)
-  m_frame[plane_id] = (trigger_id_fpga == m_trigger[plane_id] ? m_frame[plane_id]+1 : 0);
+  m_frame[plane_id] = (fpgadata.trigger_id == m_trigger[plane_id] ? m_frame[plane_id]+1 : 0);
   // store for next frame
-  m_trigger[plane_id] = trigger_id_fpga;
+  m_trigger[plane_id] = fpgadata.trigger_id;
 
   EUDAQ_DEBUG("Decoded trigger "  + to_string(m_trigger[plane_id]) + " frame " + to_string(m_frame[plane_id]));
-  if (m_frame[plane_id] < frame_start[plane_id] || m_frame[plane_id] > frame_stop[plane_id]) {
+  if (m_frame[plane_id] < m_frame_start[plane_id] || m_frame[plane_id] > m_frame_stop[plane_id]) {
     EUDAQ_DEBUG("Skipping frame");
     return false;
   }
@@ -139,7 +137,7 @@ bool dSiPMEvent2StdEventConverter::Converting(
   static uint64_t tt_timestamp;
   static uint64_t tt_ts_3mhz_fpga;
   static uint16_t tt_ts_408mhz_fpga;
-  {
+  if (m_create_ttree[plane_id]) {
     auto lock = std::unique_lock(m_global_mutex);
     if (m_ttree_clockdata == nullptr) {
       m_ttree_clockdata = new TTree("dSiPM_clockdata", "dSiPM clock data");
@@ -211,8 +209,19 @@ bool dSiPMEvent2StdEventConverter::Converting(
         return false;
       }
     }
+    // Inge suggests this cut
+    if (clockCoarse <= 4) {
+      EUDAQ_WARN("Coarse clock <= 4. This might screw up timing analysis.");
+      if (m_checkValid[plane_id] == true) {
+        return false;
+      }
+    }
     // for the fine clock 0 may appear but should be mapped to 32
     if (clockFine == 0) {
+      EUDAQ_WARN("clockFine == 0. This value usually isn't reached.");
+      if (m_checkValid[plane_id] == true) {
+        return false;
+      }
       clockFine = 32;
     }
 
@@ -267,23 +276,25 @@ bool dSiPMEvent2StdEventConverter::Converting(
     plane.PushPixel(col, row, hitBit, timestamp);
 
     // Fill TTree
-    auto lock = std::unique_lock(m_global_mutex);
-    tt_plane_id = plane_id;
-    tt_trigger_id_fpga = trigger_id_fpga;
-    tt_frame = m_frame[plane_id];
-    tt_quadrant = getQuadrant(col, row);
-    tt_col = col;
-    tt_row = row;
-    tt_hitBit = hitBit;
-    tt_validBit = validBit;
-    tt_bunchCount = bunchCount;
-    tt_clockCoarse = clockCoarse;
-    tt_clockFine = clockFine;
-    tt_timestamp = timestamp;
-    tt_ts_3mhz_fpga = ts_readout_fpga;
-    tt_ts_408mhz_fpga = ts_fine_fpga;
-    m_ttree_clockdata->Fill();
-    lock.unlock();
+    if (m_create_ttree[plane_id]) {
+      auto lock = std::unique_lock(m_global_mutex);
+      tt_plane_id = plane_id;
+      tt_trigger_id_fpga = fpgadata.trigger_id;
+      tt_frame = m_frame[plane_id];
+      tt_quadrant = getQuadrant(col, row);
+      tt_col = col;
+      tt_row = row;
+      tt_hitBit = hitBit;
+      tt_validBit = validBit;
+      tt_bunchCount = bunchCount;
+      tt_clockCoarse = clockCoarse;
+      tt_clockFine = clockFine;
+      tt_timestamp = timestamp;
+      tt_ts_3mhz_fpga = fpgadata.timestamp_coarse;
+      tt_ts_408mhz_fpga = fpgadata.timestamp_fine;
+      m_ttree_clockdata->Fill();
+      lock.unlock();
+    }
 
   } // pixels in frame
 
@@ -293,7 +304,7 @@ bool dSiPMEvent2StdEventConverter::Converting(
   // Store frame begin and end in picoseconds
   d2->SetTimeBegin(frameStart);
   d2->SetTimeEnd(frameEnd);
-  d2->SetTriggerN(trigger_id_fpga);
+  d2->SetTriggerN(fpgadata.trigger_id);
 
   // Add tag with frame number for additional information
   d2->SetTag("frame", m_frame[plane_id]);
