@@ -209,20 +209,12 @@ bool dSiPMEvent2StdEventConverter::Converting(
         return false;
       }
     }
-    // Inge suggests this cut
-    if (clockCoarse <= 4) {
-      EUDAQ_WARN("Coarse clock <= 4. This might screw up timing analysis.");
-      if (m_checkValid[plane_id] == true) {
-        return false;
-      }
-    }
-    // for the fine clock 0 may appear but should be mapped to 32
+    // According to Inge this needs to be discarded
     if (clockFine == 0) {
-      EUDAQ_WARN("clockFine == 0. This value usually isn't reached.");
+      EUDAQ_WARN("clockFine == 0. This might screw up timing analysis.");
       if (m_checkValid[plane_id] == true) {
         return false;
       }
-      clockFine = 32;
     }
 
     // frame start
